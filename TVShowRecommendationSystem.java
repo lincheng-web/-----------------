@@ -17,8 +17,8 @@ public class TVShowRecommendationSystem {
     private static final String RATINGS_FILE = "ratings.txt";
     
     // DeepSeek API配置 - 请替换为实际的API密钥
-    private static final String DEEPSEEK_API_KEY = "";
-    private static final String DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+    private static final String DEEPSEEK_API_KEY = ""; // 请替换为您的实际API密钥
+    private static final String DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
     
     // 当前登录用户
     private static User currentUser = null;
@@ -1272,7 +1272,7 @@ public class TVShowRecommendationSystem {
     }
     
     /**
-     * 设置用户喜好并获取推荐
+     * 设置用户喜好并获取推荐 - 修改后的版本（不参考本地数据库）
      */
     private static void getRecommendations() {
         System.out.println("\n========== 电视剧推荐 ==========");
@@ -1288,39 +1288,42 @@ public class TVShowRecommendationSystem {
         currentUser.setPreferences(preferences);
         saveUsers();
         
-        // 准备推荐请求数据
         System.out.println("\n正在根据您的喜好生成推荐...");
         
-        // 构建电视剧库信息
-        StringBuilder tvShowsInfo = new StringBuilder();
-        tvShowsInfo.append("可用的电视剧列表：\n");
-        for (TVShow show : tvShows) {
-            tvShowsInfo.append(show.toRecommendationString()).append("\n");
-        }
-        
-        // 构建提示信息
-        String prompt = String.format("用户喜好：%s\n%s\n请根据用户的喜好从提供的电视剧列表中推荐3-5部最匹配的电视剧，只返回推荐的电视剧ID和标题，每行一个，不要其他内容。",
-                preferences, tvShowsInfo.toString());
-        
         try {
-            // 调用DeepSeek API获取推荐
-            String response = callDeepSeekAPI(prompt);
+            // 调用DeepSeek API获取推荐（不参考本地数据库）
+            String response = callDeepSeekAPI(preferences);
             
-            // 解析并显示推荐结果
-            displayRecommendations(response);
+            // 直接显示API返回的推荐结果
+            System.out.println("\n基于您的喜好，为您推荐以下电视剧：");
+            System.out.println("=====================================");
+            System.out.println(response);
             
         } catch (Exception e) {
             System.out.println("获取推荐失败: " + e.getMessage());
-            // 提供基于类型的简单备选推荐
-            System.out.println("为您提供基于类型的推荐:");
-            provideFallbackRecommendations(preferences);
+            System.out.println("请检查API密钥是否配置正确或网络连接是否正常");
         }
     }
     
     /**
-     * 调用DeepSeek API
+     * 调用DeepSeek API - 修改后的版本（不参考本地数据库）
      */
-    private static String callDeepSeekAPI(String prompt) throws IOException {
+    private static String callDeepSeekAPI(String userPreferences) throws IOException {
+        // 检查API密钥
+        if (DEEPSEEK_API_KEY.isEmpty() || DEEPSEEK_API_KEY.equals("sk-your-api-key-here")) {
+            throw new IOException("请先配置DeepSeek API密钥");
+        }
+        
+        // 构建完整的提示信息（不包含本地数据库内容）
+        String prompt = "用户喜好：" + userPreferences + 
+                       "\n\n请根据用户的喜好推荐3-5部合适的电视剧，" +
+                       "每部电视剧请提供名称和详细的推荐原因（说明为什么这部剧符合用户喜好），" +
+                       "推荐的电视剧可以是任意地区、任意年份的作品，" +
+                       "请确保推荐内容丰富、有针对性，并且格式清晰易读。";
+        
+        // 构建JSON请求体
+        String requestBody = buildRequestBody(prompt);
+        
         URL url = new URL(DEEPSEEK_API_URL);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         
@@ -1328,18 +1331,21 @@ public class TVShowRecommendationSystem {
         connection.setRequestMethod("POST");
         connection.setRequestProperty("Content-Type", "application/json");
         connection.setRequestProperty("Authorization", "Bearer " + DEEPSEEK_API_KEY);
+        connection.setRequestProperty("Accept", "application/json");
         connection.setDoOutput(true);
-        
-        // 构建请求体
-        String jsonInputString = String.format(
-            "{\"model\": \"deepseek-chat\", \"messages\": [{\"role\": \"user\", \"content\": \"%s\"}]}",
-            prompt.replace("\"", "\\\"")
-        );
+        connection.setConnectTimeout(3000000);
+        connection.setReadTimeout(3000000);
         
         // 发送请求
         try (OutputStream os = connection.getOutputStream()) {
-            byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+            byte[] input = requestBody.getBytes(StandardCharsets.UTF_8);
             os.write(input, 0, input.length);
+        }
+        
+        // 检查响应代码
+        int responseCode = connection.getResponseCode();
+        if (responseCode != 200) {
+            throw new IOException("HTTP响应代码: " + responseCode + " - " + connection.getResponseMessage());
         }
         
         // 读取响应
@@ -1348,86 +1354,59 @@ public class TVShowRecommendationSystem {
             new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
             String responseLine;
             while ((responseLine = br.readLine()) != null) {
-                response.append(responseLine.trim());
+                response.append(responseLine);
             }
         }
         
-        // 解析JSON响应，提取内容
-        // 这里简化处理，实际应使用JSON解析库
-        int contentStart = response.indexOf("\"content\":\"") + 11;
-        int contentEnd = response.indexOf("\"", contentStart);
-        if (contentStart > 10 && contentEnd > contentStart) {
-            return response.substring(contentStart, contentEnd);
-        } else {
-            throw new IOException("无法解析API响应");
-        }
+        // 解析响应内容
+        return extractContentFromResponse(response.toString());
     }
     
     /**
-     * 显示推荐结果
+     * 手动构建JSON请求体
      */
-    private static void displayRecommendations(String response) {
-        System.out.println("\n为您推荐以下电视剧：");
-        String[] recommendations = response.split("\n");
+    private static String buildRequestBody(String prompt) {
+        // 转义prompt中的特殊字符
+        String escapedPrompt = prompt.replace("\\", "\\\\")
+                                   .replace("\"", "\\\"")
+                                   .replace("\n", "\\n")
+                                   .replace("\r", "\\r")
+                                   .replace("\t", "\\t");
         
-        for (String rec : recommendations) {
-            // 提取ID
-            String id = "";
-            if (rec.contains("ID: ")) {
-                int start = rec.indexOf("ID: ") + 4;
-                int end = rec.indexOf(",", start);
-                if (end > start) {
-                    id = rec.substring(start, end).trim();
-                }
-            }
-            
-            // 如果找到了ID，显示详细信息
-            if (!id.isEmpty()) {
-                TVShow show = findTVShowById(id);
-                if (show != null) {
-                    System.out.println("\n-------------------------------------");
-                    displayTVShowDetails(show);
-                } else {
-                    System.out.println(rec);
-                }
-            } else {
-                System.out.println(rec);
-            }
-        }
+        return "{" +
+               "\"model\": \"deepseek-chat\"," +
+               "\"messages\": [{" +
+               "\"role\": \"user\"," +
+               "\"content\": \"" + escapedPrompt + "\"" +
+               "}]," +
+               "\"max_tokens\": 1000," +
+               "\"temperature\": 0.7" +
+               "}";
     }
     
     /**
-     * 提供备选推荐（当API调用失败时）
+     * 从API响应中提取内容
      */
-    private static void provideFallbackRecommendations(String preferences) {
-        // 简单的基于关键词匹配的推荐
-        List<TVShow> recommendations = new ArrayList<>();
-        String lowerPref = preferences.toLowerCase();
-        
-        for (TVShow show : tvShows) {
-            if (show.getGenre().toLowerCase().contains(lowerPref) ||
-                show.getTitle().toLowerCase().contains(lowerPref) ||
-                show.getDirector().toLowerCase().contains(lowerPref) ||
-                show.getActors().stream().anyMatch(actor -> actor.toLowerCase().contains(lowerPref))) {
-                recommendations.add(show);
-                if (recommendations.size() >= 5) break;
-            }
+    private static String extractContentFromResponse(String response) {
+        // 简单的字符串解析来提取content字段
+        int contentIndex = response.indexOf("\"content\":\"");
+        if (contentIndex == -1) {
+            throw new RuntimeException("无法在API响应中找到内容");
         }
         
-        // 如果没有找到匹配的，推荐热门剧集
-        if (recommendations.isEmpty()) {
-            List<TVShow> sortedByRating = new ArrayList<>(tvShows);
-            sortedByRating.sort((a, b) -> Double.compare(b.getRating(), a.getRating()));
-            for (int i = 0; i < Math.min(5, sortedByRating.size()); i++) {
-                recommendations.add(sortedByRating.get(i));
-            }
+        contentIndex += 11; // 跳过 "\"content\":\""
+        int contentEnd = response.indexOf("\"", contentIndex);
+        
+        if (contentEnd == -1) {
+            throw new RuntimeException("API响应格式不正确");
         }
         
-        // 显示推荐
-        for (int i = 0; i < recommendations.size(); i++) {
-            System.out.println("\n" + (i + 1) + ".");
-            displayTVShowDetails(recommendations.get(i));
-        }
+        String content = response.substring(contentIndex, contentEnd);
+        
+        // 处理转义字符
+        return content.replace("\\n", "\n")
+                     .replace("\\\"", "\"")
+                     .replace("\\\\", "\\");
     }
     
     /**
