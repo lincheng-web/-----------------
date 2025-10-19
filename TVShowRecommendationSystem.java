@@ -17,7 +17,7 @@ public class TVShowRecommendationSystem {
     private static final String RATINGS_FILE = "ratings.txt";
     
     // DeepSeek API配置 - 请替换为实际的API密钥
-    private static final String DEEPSEEK_API_KEY = "sk-49deaf4074014933a71cc28fba591832";
+    private static final String DEEPSEEK_API_KEY = "";
     private static final String DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
     
     // 当前登录用户
